@@ -1,8 +1,9 @@
 package gar
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ func init() {
 type ArFile struct {
 	file     string
 	headList []*fileHeader
+	modified bool
 }
 
 type fileHeader struct {
@@ -38,7 +40,18 @@ func Open(file string) (ar *ArFile, err error) {
 	}
 	defer f.Close()
 	ar = &ArFile{}
-	ar.headList = make([]*fileHeader, 0, 16)
+	ar.file = file
+
+	return ar, nil
+}
+func (arf *ArFile) List() []string {
+	f, err := os.Open(arf.file)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	headList := make([]*fileHeader, 0, 16)
 
 	//br := bufio.NewReader(f)
 	buf := make([]byte, 60)
@@ -46,7 +59,7 @@ func Open(file string) (ar *ArFile, err error) {
 	//	line, _ := br.ReadString('\n')
 
 	if n == 8 && strings.Compare("!<arch>\n", string(buf[:8])) != 0 {
-		return nil, errors.New("not ar file!")
+		return nil
 	}
 	for {
 		//line, _ = br.ReadString('\n')
@@ -58,29 +71,53 @@ func Open(file string) (ar *ArFile, err error) {
 		head := parseHead(string(buf))
 		offset, _ := f.Seek(0, os.SEEK_CUR)
 		head.offset = offset
-		ar.headList = append(ar.headList, head)
+		headList = append(headList, head)
 
 		// read data
-		//pad := head.size % 2
-		//f.Seek(int64(head.size+pad), os.SEEK_CUR)
-		head.data = make([]byte, head.size)
+		pad := head.size % 2
+		f.Seek(int64(head.size+pad), os.SEEK_CUR)
+		/*head.data = make([]byte, head.size)
 		f.Read(head.data)
 		if head.size%2 == 1 {
 			f.Seek(1, os.SEEK_CUR)
-		}
+		}*/
 	}
-	return ar, nil
-}
-func (arf *ArFile) List() {
-	for _, v := range arf.headList {
+
+	for _, v := range headList {
 		fmt.Println(v)
 	}
+	return nil
 }
-func (arf *ArFile) Append(file string) {
-
+func (arf *ArFile) Append(file string) error {
+	f, err := os.Open(arf.file)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	//add header
+	f.Seek(0, os.SEEK_END)
+	var head [60]byte
+	w := bytes.NewBuffer(head[:])
+	id := f.Name()
+	if len(id) > 16 {
+		id = id[:16]
+	}
+	w.WriteString(id)
+	// write space
+	f.Write(head[:])
+	data, err := ioutil.ReadFile(file)
+	// add data
+	f.Write(data)
+	pad := []byte{'\n'}
+	if len(data)%2 == 1 {
+		f.Write(pad)
+	}
+	return nil
 }
 func (arf *ArFile) Close() {
-
+	if arf.modified {
+		//write data back
+	}
 }
 
 func parseHead(line string) *fileHeader {
